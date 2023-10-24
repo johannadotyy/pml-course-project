@@ -1,0 +1,126 @@
+---
+title: "Course Project - Activity Data"
+author: "Johanna Doty"
+date: "2023-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to build a prediction model for the type of activity performed. 
+We train 4 models: Decision Tree, Linear Discriminant Analysis, Gradient Boosted Trees, and Random Forest. We will also use 5-folds cross validation on the training set. We then estimate our out of sample error by predicting the outcome on a validation set randomly selected from the original training data. Based on those numbers, we decide on the best model, and use it to predict 20 cases in the test data.
+
+## About the Data
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The data for this analysis come from participants wearing several accelerometers who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+[Training data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+[Testing data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+[Source of the data](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
+
+
+### Loading the Data
+We start by loading our training and testing data sets. 
+```{r, message = FALSE}
+library(caret)
+library(lars)
+library(randomForest)
+library(gbm)
+training <- read.table("./data/pml-training.csv", header = TRUE, sep = ",")
+testing <- read.table("./data/pml-testing.csv", header = TRUE, sep = ",")
+```
+
+
+### Processing the Data
+To prepare to build our models, we start by ensuring that the `classe` variable is considered a factor variable instead of character.
+
+Then we split our training data into a training set and a validation set. 
+```{r}
+training$classe <- as.factor(training$classe)
+inTrain <- createDataPartition(training$classe, p = 0.75)[[1]]
+training <- training[inTrain, ]        
+validation <- training[-inTrain, ]
+```
+
+Next we want to remove some unnecessary variables from our data set. We start by removing the variables that are predominantly NAs. From the output below, we can see that there are 67 variables that are over 97% NA's. These variables are removed. 
+```{r}
+table(colMeans(is.na(training)))
+training <- training[, colMeans(is.na(training))<0.95]
+```
+Then we also remove the first 7 variables in the data set as they do not contain measurements useful for prediction. Then we determine which variables are Nearly Zero Variables using the `nearZeroVar` function. After removing these variables, we are left with 53 variables in the data set to use in our prediction models. 
+```{r}
+training <- training[, -(1:7)]
+
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+dim(training)
+```
+Now we repeat this processing steps for validation set.
+```{r}
+validation <- validation[, colMeans(is.na(validation))<0.95]
+validation <- validation[, -(1:7)]
+nzv <- nearZeroVar(validation)
+validation <- validation[, -nzv]
+```
+# Building a Prediction Model
+We will fit 4 different models: a decision tree model, linear discriminant analysis model, gradient boosted model, and a random forest model. We will compare these models based on their accuracy measures on the validation set. 
+
+## Cross Validation
+We will be using 5-fold cross validation. 
+```{r}
+folds <- trainControl(method="cv", number=5)
+```
+
+### Decision Tree Model
+We start with the decision tree model and test its accuracy on the validation set. 
+```{r}
+treemod <- train(classe ~ ., method = "rpart", data = training, trControl = 
+                         folds)
+confusionMatrix(predict(treemod, validation), validation$classe)
+treeacc <- confusionMatrix(predict(treemod, validation), validation$classe)$overall['Accuracy']
+```
+
+### Linear Discriminant Analysis Model
+We then fit a linear discriminant analysis model and test its accuracy on the validation set.
+```{r}
+ldamodel <- train(classe ~., method = "lda", data = training, trControl = 
+                          folds)
+confusionMatrix(predict(ldamodel, validation), validation$classe)
+ldaacc <- confusionMatrix(predict(ldamodel, validation), validation$classe)$overall['Accuracy']
+```
+
+### Gradient Boosted Model
+We then fit a gradient boosted model and test its accuracy on the validation set.
+```{r}
+boostmodel <- train(classe ~., method = "gbm", data = training, verbose = FALSE, 
+                    trControl = folds)
+confusionMatrix(predict(boostmodel, validation), validation$classe)
+gbmacc <- confusionMatrix(predict(boostmodel, validation), validation$classe)$overall['Accuracy']
+```
+
+### Random Forest Model
+
+Lastly, we fit a random forest model and test its accuracy on the validation set. (Note we only do this with 5 trees in order to reduce computation time.)
+```{r}
+rfmodel <- train(classe ~., method = "rf", data = training, ntree = 5, trControl = folds)
+confusionMatrix(predict(rfmodel, validation), validation$classe)
+rfacc <- confusionMatrix(predict(rfmodel, validation), validation$classe)$overall['Accuracy']
+```
+
+## Expected Out of Sample Error
+In the table below, we can compare the accuracy and estimated out of sample (oos) error for each model. 
+```{r, echo = FALSE}
+data.frame(model = c("Decision Tree", "LDA", "GBM", "Random Forest"), 
+           accuracy = c(treeacc, ldaacc, gbmacc, rfacc), 
+           oos = c(1 - treeacc, 1 - ldaacc, 1- gbmacc, 1- rfacc))
+```
+From here, we can decide that the Random Forest model has the highest accuracy and lowest expected out of sample error. This is the model we will use for prediction.
+
+# Predictions on Testing Data
+We will now predict the activity of the 20 cases in the test data
+```{r}
+predict(rfmodel, testing)
+```
